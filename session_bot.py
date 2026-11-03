@@ -4,7 +4,7 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from telethon import TelegramClient, events
-from telethon.sessions import StringSession
+from telethon.sessions import StringSession, MemorySession
 from telethon.errors import (
     SessionPasswordNeededError,
     PhoneCodeInvalidError,
@@ -22,6 +22,9 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"OK")
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
     def log_message(self, format, *args):
         return
 
@@ -35,13 +38,14 @@ def run_server():
 threading.Thread(target=run_server, daemon=True).start()
 
 # ==========================================
-# CREDENTIALS & CLIENT
+# CREDENTIALS & MEMORY CLIENT (NO DISK LOCK)
 # ==========================================
 BOT_TOKEN = os.environ.get("SESSION_BOT_TOKEN", "9180219965:AAG7YG-OLeuhoT4b0fcwHccN4yn3UYtv9xE")
 API_ID = int(os.environ.get("API_ID", 30417927))
 API_HASH = os.environ.get("API_HASH", "a859ee736c7f07b2e2fa80159409ecc3")
 
-bot = TelegramClient("session_generator_host", API_ID, API_HASH)
+# MemorySession use karne se database lock error kabhi nahi aayega
+bot = TelegramClient(MemorySession(), API_ID, API_HASH)
 
 # Temporary session state
 user_state = {}
@@ -49,7 +53,7 @@ user_state = {}
 # ==========================================
 # BOT HANDLERS
 # ==========================================
-@bot.on(events.NewMessage(pattern="/start"))
+@bot.on(events.NewMessage(pattern=r"^/start"))
 async def start_handler(event):
     uid = event.sender_id
     user_state[uid] = {}
@@ -60,7 +64,7 @@ async def start_handler(event):
         "Process cancel karne ke liye /cancel bhejein."
     )
 
-@bot.on(events.NewMessage(pattern="/cancel"))
+@bot.on(events.NewMessage(pattern=r"^/cancel"))
 async def cancel_handler(event):
     uid = event.sender_id
     if uid in user_state:
@@ -72,8 +76,8 @@ async def cancel_handler(event):
 
 @bot.on(events.NewMessage)
 async def message_handler(event):
-    text = event.text.strip()
-    if text.startswith(("/start", "/cancel")):
+    text = event.text.strip() if event.text else ""
+    if not text or text.startswith(("/start", "/cancel")):
         return
 
     uid = event.sender_id
