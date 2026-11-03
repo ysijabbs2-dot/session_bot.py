@@ -13,7 +13,7 @@ from telethon.errors import (
 )
 
 # ==========================================
-# HEALTH SERVER (RENDER UPTIME)
+# CRASH-PROOF WEB PORT (RENDER UPTIME FIX)
 # ==========================================
 PORT = int(os.environ.get("PORT", 8080))
 
@@ -35,18 +35,20 @@ def run_server():
 threading.Thread(target=run_server, daemon=True).start()
 
 # ==========================================
-# BOT CREDENTIALS
+# CREDENTIALS & CLIENT
 # ==========================================
-BOT_TOKEN = os.environ.get("SESSION_BOT_TOKEN")
+BOT_TOKEN = os.environ.get("SESSION_BOT_TOKEN", "9180219965:AAG7YG-OLeuhoT4b0fcwHccN4yn3UYtv9xE")
 API_ID = int(os.environ.get("API_ID", 30417927))
 API_HASH = os.environ.get("API_HASH", "a859ee736c7f07b2e2fa80159409ecc3")
 
-# Main Bot Client
-bot = TelegramClient("session_bot_host", API_ID, API_HASH)
+bot = TelegramClient("session_generator_host", API_ID, API_HASH)
 
-# In-memory user state
+# Temporary session state
 user_state = {}
 
+# ==========================================
+# BOT HANDLERS
+# ==========================================
 @bot.on(events.NewMessage(pattern="/start"))
 async def start_handler(event):
     uid = event.sender_id
@@ -66,7 +68,7 @@ async def cancel_handler(event):
         if client and client.is_connected():
             await client.disconnect()
         del user_state[uid]
-    await event.respond("❌ Process cancel kar diya gaya hai. Shuru karne ke liye /start dabayein.")
+    await event.respond("❌ Process cancel kar diya gaya hai. Shuru karne ke liye dobara /start bhejein.")
 
 @bot.on(events.NewMessage)
 async def message_handler(event):
@@ -78,11 +80,11 @@ async def message_handler(event):
     state = user_state.get(uid, {})
     step = state.get("step")
 
-    # Step 1: Phone number input
+    # Step 1: Phone number receive karke code request send karna
     if not step:
         phone = text.replace(" ", "")
         status_msg = await event.respond("⏳ Telegram se connect kiya ja raha hai...")
-        
+
         tc = TelegramClient(StringSession(), API_ID, API_HASH)
         await tc.connect()
 
@@ -108,7 +110,7 @@ async def message_handler(event):
 
     tc = state.get("client")
 
-    # Step 2: OTP Verification
+    # Step 2: OTP verify karna
     if step == "otp":
         otp = text.replace(" ", "").replace("-", "")
         phone = state.get("phone")
@@ -132,7 +134,7 @@ async def message_handler(event):
         except Exception as e:
             await event.respond(f"❌ Error: {str(e)}")
 
-    # Step 3: 2FA Password
+    # Step 3: 2FA Password submit karna
     elif step == "2fa":
         password = text
         try:
@@ -150,6 +152,9 @@ async def message_handler(event):
         except Exception as e:
             await event.respond(f"❌ Error: {str(e)}")
 
+# ==========================================
+# MAIN EXECUTION
+# ==========================================
 def main():
     print("Telethon Session Bot starting...")
     bot.start(bot_token=BOT_TOKEN)
