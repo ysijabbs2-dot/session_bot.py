@@ -1,7 +1,9 @@
 import os
 import re
 import asyncio
-from telethon import TelegramClient
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
 from telethon.errors import (
     SessionPasswordNeededError,
@@ -10,25 +12,45 @@ from telethon.errors import (
     PhoneNumberInvalidError,
     FloodWaitError
 )
-from telethon import events, Button
 
 # ==========================================
-# CONFIGURATION
+# CREDENTIALS & CONFIG
 # ==========================================
-# Session generator bot token
-BOT_TOKEN = os.environ.get("SESSION_BOT_TOKEN", "9180219965:AAG7YG-OLeuhoT4b0fcwHccN4yn3UYtv9xE")
+BOT_TOKEN = os.environ.get("SESSION_BOT_TOKEN", "9180219965:AAFGNdbGoVUpueyOosVtEywexBOAVzY_9qw")
 API_ID = int(os.environ.get("API_ID", 30417927))
 API_HASH = os.environ.get("API_HASH", "a859ee736c7f07b2e2fa80159409ecc3")
 
-# Main bot client
-bot = TelegramClient('session_generator_bot', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
+# ==========================================
+# WEB HEALTH SERVER (Fixes Render Deploy Hang)
+# ==========================================
+PORT = int(os.environ.get("PORT", 8080))
 
-# Active state cache: {user_id: {"step": "...", "client": ..., "phone": ..., "phone_code_hash": ...}}
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+    def log_message(self, format, *args):
+        return
+
+def run_server():
+    try:
+        server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
+        server.serve_forever()
+    except Exception:
+        pass
+
+threading.Thread(target=run_server, daemon=True).start()
+
+# ==========================================
+# BOT ENGINE
+# ==========================================
+bot = TelegramClient('session_bot_session', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 user_sessions = {}
 
-# ==========================================
-# UI MESSAGES & TEMPLATES
-# ==========================================
 START_TEXT = """
 <blockquote>⚡ <b>OXY SESSION ARCHITECT</b>
 <i>High-Performance String Session Engine</i></blockquote>
@@ -54,12 +76,9 @@ Please enter the <b>Phone Number</b> linked to your Telegram account, including 
 <i>Send <code>/cancel</code> or tap the button below to abort.</i>
 """
 
-def cancel_button():
+def cancel_btn():
     return [Button.inline("✖ Cancel Process", b"cancel_flow")]
 
-# ==========================================
-# EVENT HANDLERS
-# ==========================================
 @bot.on(events.NewMessage(pattern=r"^/start"))
 async def handle_start(event):
     uid = event.sender_id
@@ -107,11 +126,11 @@ async def handle_start_gen(event):
         "step": "awaiting_phone",
         "client": TelegramClient(StringSession(), API_ID, API_HASH)
     }
-    await event.edit(PHONE_PROMPT, parse_mode="html", buttons=cancel_button())
+    await event.edit(PHONE_PROMPT, parse_mode="html", buttons=cancel_btn())
 
 @bot.on(events.NewMessage)
 async def handle_inputs(event):
-    if event.raw_text.startswith(("/", "✖")):
+    if not event.raw_text or event.raw_text.startswith("/"):
         return
 
     uid = event.sender_id
@@ -123,9 +142,7 @@ async def handle_inputs(event):
     client = state.get("client")
     text = event.raw_text.strip()
 
-    # ------------------------------------------
-    # STEP 1: PHONE NUMBER INPUT
-    # ------------------------------------------
+    # STEP 1: PHONE
     if step == "awaiting_phone":
         phone = re.sub(r"[^\d+]", "", text)
         if not phone.startswith("+"):
@@ -150,9 +167,9 @@ A 5-digit verification code has been dispatched to your official Telegram app fo
 • Enter the code separated by spaces if needed (e.g. <code>1 2 3 4 5</code>) to prevent Telegram auto-locking.
 • Example format: <code>12345</code> or <code>1 2 3 4 5</code>
 """
-            await status_msg.edit(otp_prompt, parse_mode="html", buttons=cancel_button())
+            await status_msg.edit(otp_prompt, parse_mode="html", buttons=cancel_btn())
         except PhoneNumberInvalidError:
-            await status_msg.edit("❌ <b>Invalid Phone Number!</b>\nPlease double-check the country code and try again.", parse_mode="html", buttons=cancel_button())
+            await status_msg.edit("❌ <b>Invalid Phone Number!</b>\nPlease double-check the country code and try again.", parse_mode="html", buttons=cancel_btn())
         except FloodWaitError as e:
             await status_msg.edit(f"⚠️ <b>Flood Wait Triggered:</b> Please wait <code>{e.seconds}</code> seconds before retrying.", parse_mode="html")
             del user_sessions[uid]
@@ -160,9 +177,7 @@ A 5-digit verification code has been dispatched to your official Telegram app fo
             await status_msg.edit(f"❌ <b>Error:</b> <code>{str(e)}</code>\nUse /start to retry.", parse_mode="html")
             del user_sessions[uid]
 
-    # ------------------------------------------
-    # STEP 2: OTP VERIFICATION
-    # ------------------------------------------
+    # STEP 2: OTP
     elif step == "awaiting_otp":
         otp = text.replace(" ", "").strip()
         status_msg = await event.respond("⏳ <b>Validating authorization code...</b>", parse_mode="html")
@@ -173,7 +188,6 @@ A 5-digit verification code has been dispatched to your official Telegram app fo
                 code=otp,
                 phone_code_hash=state["phone_code_hash"]
             )
-            # Login Success without 2FA
             session_str = client.session.save()
             await client.disconnect()
             del user_sessions[uid]
@@ -192,7 +206,6 @@ A 5-digit verification code has been dispatched to your official Telegram app fo
             await status_msg.edit(done_text, parse_mode="html")
 
         except SessionPasswordNeededError:
-            # 2FA Password is required
             state["step"] = "awaiting_2fa"
             twofa_text = """
 <blockquote>🔒 <b>STEP 3 OF 3: TWO-STEP VERIFICATION (2FA)</b></blockquote>
@@ -201,10 +214,10 @@ Your account is secured with a Cloud Password.
 
 Please send your <b>Two-Step Verification Password</b> below to complete authorization:
 """
-            await status_msg.edit(twofa_text, parse_mode="html", buttons=cancel_button())
+            await status_msg.edit(twofa_text, parse_mode="html", buttons=cancel_btn())
 
         except PhoneCodeInvalidError:
-            await status_msg.edit("❌ <b>Incorrect Login Code!</b>\nPlease check your Telegram messages and send the valid code again.", parse_mode="html", buttons=cancel_button())
+            await status_msg.edit("❌ <b>Incorrect Login Code!</b>\nPlease check your Telegram messages and send the valid code again.", parse_mode="html", buttons=cancel_btn())
         except Exception as e:
             await status_msg.edit(f"❌ <b>Authentication Failure:</b> <code>{str(e)}</code>", parse_mode="html")
             try:
@@ -213,9 +226,7 @@ Please send your <b>Two-Step Verification Password</b> below to complete authori
                 pass
             del user_sessions[uid]
 
-    # ------------------------------------------
-    # STEP 3: 2FA PASSWORD INPUT
-    # ------------------------------------------
+    # STEP 3: 2FA
     elif step == "awaiting_2fa":
         password = text
         status_msg = await event.respond("⏳ <b>Verifying Two-Step password...</b>", parse_mode="html")
@@ -240,7 +251,7 @@ Please send your <b>Two-Step Verification Password</b> below to complete authori
             await status_msg.edit(done_text, parse_mode="html")
 
         except PasswordHashInvalidError:
-            await status_msg.edit("❌ <b>Incorrect 2FA Password!</b>\nPlease verify your password and enter it again.", parse_mode="html", buttons=cancel_button())
+            await status_msg.edit("❌ <b>Incorrect 2FA Password!</b>\nPlease verify your password and enter it again.", parse_mode="html", buttons=cancel_btn())
         except Exception as e:
             await status_msg.edit(f"❌ <b>Authentication Failure:</b> <code>{str(e)}</code>", parse_mode="html")
             try:
@@ -249,8 +260,5 @@ Please send your <b>Two-Step Verification Password</b> below to complete authori
                 pass
             del user_sessions[uid]
 
-# ==========================================
-# BOOTSTRAP
-# ==========================================
-print("Oxy Telethon String Session Generator Bot is running...")
+print("Session Generator Bot is online!")
 bot.run_until_disconnected()
