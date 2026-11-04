@@ -16,7 +16,7 @@ from telethon import events, Button
 # CONFIGURATION
 # ==========================================
 # Session generator bot token
-BOT_TOKEN = os.environ.get("SESSION_BOT_TOKEN", "YOUR_SESSION_BOT_TOKEN_HERE")
+BOT_TOKEN = os.environ.get("SESSION_BOT_TOKEN", "9180219965:AAG7YG-OLeuhoT4b0fcwHccN4yn3UYtv9xE")
 API_ID = int(os.environ.get("API_ID", 30417927))
 API_HASH = os.environ.get("API_HASH", "a859ee736c7f07b2e2fa80159409ecc3")
 
